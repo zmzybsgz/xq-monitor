@@ -137,6 +137,22 @@ func main() {
 
 	client := xueqiu.NewClient(cfg.XueqiuCookie)
 
+	// 启动时推送当前持仓概览
+	if cfg.PushplusToken != "" {
+		summaryHoldings := make(map[string][]model.Holding)
+		for _, p := range cfg.Portfolios {
+			if hs, err := client.GetHoldings(p.ID); err == nil {
+				summaryHoldings[p.Name+"（"+p.ID+"）"] = hs
+				log.Printf("获取 %s 持仓 %d 只", p.Name, len(hs))
+			} else {
+				log.Printf("[WARN] 获取 %s 持仓失败: %v", p.Name, err)
+			}
+		}
+		if err := notify.SendStartupSummary(cfg.PushplusToken, summaryHoldings); err != nil {
+			log.Printf("[ERROR] 启动概览推送失败: %v", err)
+		}
+	}
+
 	if once || cfg.Interval <= 0 {
 		runOnce(cfg, client)
 		log.Println("=== 监控完成 ===")

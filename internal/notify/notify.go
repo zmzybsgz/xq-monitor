@@ -109,6 +109,56 @@ func BuildHTML(portfolioID, portfolioName string, diff model.Diff, advices []mod
 	return sb.String()
 }
 
+// SendStartupSummary 启动时推送当前持仓概览
+func SendStartupSummary(token string, holdings map[string][]model.Holding) error {
+	if token == "" {
+		return nil
+	}
+
+	now := time.Now().Format("2006-01-02 15:04")
+	var sb strings.Builder
+
+	sb.WriteString("<h3>🚀 雪球组合监控已启动</h3>")
+	sb.WriteString(fmt.Sprintf("<p>🕐 启动时间：%s</p>", now))
+
+	for name, hs := range holdings {
+		sb.WriteString(fmt.Sprintf("<h4>📊 %s（%d 只）</h4>", name, len(hs)))
+		sb.WriteString("<table border='1' cellpadding='5' cellspacing='0' style='border-collapse:collapse'>")
+		sb.WriteString("<tr><th>股票</th><th>代码</th><th>仓位</th></tr>")
+		for _, h := range hs {
+			sb.WriteString(fmt.Sprintf("<tr><td>%s</td><td>%s</td><td>%.2f%%</td></tr>",
+				h.Name, h.Symbol, h.Weight))
+		}
+		sb.WriteString("</table>")
+	}
+
+	payload := map[string]string{
+		"token":    token,
+		"title":    "🚀 雪球组合监控已启动",
+		"content":  sb.String(),
+		"template": "html",
+	}
+	body, _ := json.Marshal(payload)
+
+	resp, err := http.Post("http://www.pushplus.plus/send", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("PushPlus 请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("解析 PushPlus 响应失败: %w", err)
+	}
+
+	if code, ok := result["code"].(float64); ok && int(code) == 200 {
+		log.Println("[OK] 启动概览通知已发送")
+	} else {
+		return fmt.Errorf("PushPlus 发送失败：%v", result)
+	}
+	return nil
+}
+
 func formatAdviceLine(action string, a model.TradeAdvice) string {
 	if a.Shares > 0 {
 		return fmt.Sprintf("<br>　→ 建议<b>%s %d 股</b>，现价 %.2f，金额 %.0f 元",
