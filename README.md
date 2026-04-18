@@ -8,8 +8,10 @@
 - 检测新增持仓、移除持仓、仓位调整（可配置阈值）
 - 根据总投资金额计算具体买卖股数（向下 100 股取整）
 - 通过 PushPlus 推送微信通知
+- 启动时推送持仓概览，验证推送通道连通性
 - 支持常驻轮询模式和单次运行模式
 - 配置文件热加载（修改 config.json 无需重启）
+- 日志按天切割、gzip 压缩、自动保留 7 天
 
 ## 快速开始
 
@@ -79,7 +81,8 @@ make run-once
 │   ├── xueqiu/             雪球 API 客户端
 │   ├── snapshot/            快照存储与持仓对比
 │   ├── trade/              买卖建议计算
-│   └── notify/             PushPlus 微信通知
+│   ├── notify/             PushPlus 微信通知
+│   └── logger/             日志管理（按天切割、压缩、清理）
 ├── configs/                配置模板
 ├── deploy/                 Dockerfile、systemd 服务文件
 └── Makefile
