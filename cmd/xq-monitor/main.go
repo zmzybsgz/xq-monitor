@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"xueqiu-monitor/internal/config"
+	"xueqiu-monitor/internal/logger"
 	"xueqiu-monitor/internal/model"
 	"xueqiu-monitor/internal/notify"
 	"xueqiu-monitor/internal/snapshot"
@@ -117,6 +118,12 @@ func runOnce(cfg config.Config, client *xueqiu.Client) {
 }
 
 func main() {
+	l, err := logger.Setup()
+	if err != nil {
+		log.Fatalf("日志初始化失败: %v", err)
+	}
+	defer l.Close()
+
 	once := len(os.Args) > 1 && os.Args[1] == "--once"
 
 	cfg := config.Load(configFile)

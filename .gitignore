@@ -2,5 +2,6 @@
 .claude/
 config.json
 snapshots/
+logs/
 bin/
 coverage.out
