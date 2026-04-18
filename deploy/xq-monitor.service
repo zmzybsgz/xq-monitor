@@ -1,0 +1,21 @@
+[Unit]
+Description=XueQiu Portfolio Monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nobody
+WorkingDirectory=/opt/xq-monitor
+ExecStart=/opt/xq-monitor/xq-monitor
+Restart=on-failure
+RestartSec=10
+
+# 敏感配置可通过环境变量注入
+# Environment=XUEQIU_COOKIE=xxx
+# Environment=PUSHPLUS_TOKEN=xxx
+# 或使用 EnvironmentFile
+# EnvironmentFile=/opt/xq-monitor/.env
+
+[Install]
+WantedBy=multi-user.target
