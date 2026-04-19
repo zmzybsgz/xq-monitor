@@ -123,8 +123,92 @@ func TestBuildHTML_EmptyDiff(t *testing.T) {
 	if !strings.Contains(html, "测试组合") {
 		t.Error("HTML should still contain portfolio name")
 	}
-	// 不应包含变动段落
 	if strings.Contains(html, "新增持仓") {
 		t.Error("HTML should not contain 新增持仓 for empty diff")
+	}
+}
+
+func TestBuildHoldingsHTML_Normal(t *testing.T) {
+	holdings := map[string][]model.Holding{
+		"组合A（ZH001）": {
+			{Symbol: "SH601857", Name: "中国石油", Weight: 50.0},
+		},
+	}
+	html := buildHoldingsHTML(holdings, nil)
+	if !strings.Contains(html, "中国石油") {
+		t.Error("should contain stock name")
+	}
+	if !strings.Contains(html, "50.00%") {
+		t.Error("should contain weight")
+	}
+	if strings.Contains(html, "抓取失败") {
+		t.Error("should not contain error section when no errors")
+	}
+}
+
+func TestBuildHoldingsHTML_WithFetchErrors(t *testing.T) {
+	holdings := map[string][]model.Holding{}
+	fetchErrors := map[string]string{
+		"组合B（ZH002）": "HTTP 401",
+	}
+	html := buildHoldingsHTML(holdings, fetchErrors)
+	if !strings.Contains(html, "抓取失败") {
+		t.Error("should contain error section")
+	}
+	if !strings.Contains(html, "HTTP 401") {
+		t.Error("should contain error message")
+	}
+}
+
+func TestBuildHoldingsHTML_SortedOrder(t *testing.T) {
+	holdings := map[string][]model.Holding{
+		"Z组合": {{Symbol: "SH000001", Name: "Z股", Weight: 10}},
+		"A组合": {{Symbol: "SH000002", Name: "A股", Weight: 20}},
+	}
+	html := buildHoldingsHTML(holdings, nil)
+	posA := strings.Index(html, "A组合")
+	posZ := strings.Index(html, "Z组合")
+	if posA > posZ {
+		t.Error("portfolios should be sorted alphabetically")
+	}
+}
+
+func TestSendFetchErrors_EmptyToken(t *testing.T) {
+	err := SendFetchErrors("", map[string]string{"组合A（ZH001）": "HTTP 401"})
+	if err != nil {
+		t.Errorf("empty token should return nil, got %v", err)
+	}
+}
+
+func TestSendFetchErrors_EmptyErrors(t *testing.T) {
+	err := SendFetchErrors("any_token", nil)
+	if err != nil {
+		t.Errorf("empty fetchErrors should return nil, got %v", err)
+	}
+	err = SendFetchErrors("any_token", map[string]string{})
+	if err != nil {
+		t.Errorf("empty fetchErrors map should return nil, got %v", err)
+	}
+}
+
+func TestSendFetchErrors_HTMLContent(t *testing.T) {
+	// 验证 buildHoldingsHTML 的错误段与 SendFetchErrors 使用的格式一致
+	fetchErrors := map[string]string{
+		"组合A（ZH001）": "HTTP 401",
+		"组合B（ZH002）": "HTTP 403",
+	}
+	// 通过 buildHoldingsHTML 间接验证错误内容格式
+	html := buildHoldingsHTML(nil, fetchErrors)
+	if !strings.Contains(html, "组合A（ZH001）") {
+		t.Error("should contain portfolio name")
+	}
+	if !strings.Contains(html, "HTTP 401") {
+		t.Error("should contain error message")
+	}
+	// 验证两个组合都出现，且 A 在 B 之前（排序）
+	posA := strings.Index(html, "组合A")
+	posB := strings.Index(html, "组合B")
+	if posA < 0 || posB < 0 || posA > posB {
+		t.Error("fetch errors should be sorted and both present")
 	}
 }

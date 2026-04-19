@@ -9,7 +9,8 @@
 - 根据总投资金额计算具体买卖股数（向下 100 股取整）
 - 通过 PushPlus 推送微信通知
 - 启动时推送持仓概览，验证推送通道连通性
-- 支持常驻轮询模式和单次运行模式
+- 每日早 8 点推送持仓播报，确认程序运行正常
+- 抓取失败时汇总推送一条告警（全局每小时最多一条，多组合同时失败合并为一条消息）
 - 配置文件热加载（修改 config.json 无需重启）
 - 日志按天切割、gzip 压缩、自动保留 7 天
 
@@ -51,18 +52,14 @@ cp configs/config.example.json config.json
 | `pushplus_token` | PushPlus 推送令牌（不填则只在终端输出） |
 | `weight_change_delta` | 仓位变动阈值（%），低于此值不触发通知 |
 | `total_amount` | 总投资金额（元），用于计算买卖股数，0 则不计算 |
-| `interval` | 轮询间隔（秒），0 表示单次运行 |
+| `interval` | 轮询间隔（秒） |
 
 敏感字段也可通过环境变量注入：`XUEQIU_COOKIE`、`PUSHPLUS_TOKEN`。
 
 ### 3. 运行
 
 ```bash
-# 常驻模式（按 interval 定时轮询）
 make run
-
-# 单次运行
-make run-once
 ```
 
 ## 获取雪球 Cookie
@@ -91,14 +88,14 @@ make run-once
 ## 常用命令
 
 ```bash
-make build      # 编译
-make run        # 常驻模式运行
-make run-once   # 单次运行
-make test       # 运行测试
-make cover      # 测试覆盖率
-make lint       # 静态检查
-make docker     # 构建 Docker 镜像
-make clean      # 清理
+make build    # 编译
+make run      # 常驻模式运行
+make test     # 运行测试
+make cover    # 测试覆盖率
+make tidy     # 整理模块依赖
+make lint     # 静态检查
+make docker   # 构建 Docker 镜像
+make clean    # 清理
 ```
 
 ## 部署

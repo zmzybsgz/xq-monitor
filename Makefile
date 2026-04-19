@@ -3,7 +3,7 @@ CMD     := ./cmd/xq-monitor
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build run run-once test cover lint clean docker help
+.PHONY: build run test cover tidy lint clean docker help
 
 ## build: 编译二进制
 build:
@@ -12,10 +12,6 @@ build:
 ## run: 常驻模式运行
 run: build
 	./bin/$(APP)
-
-## run-once: 单次运行
-run-once: build
-	./bin/$(APP) --once
 
 ## test: 运行全部单元测试
 test:
@@ -27,6 +23,10 @@ cover:
 	go tool cover -func=coverage.out
 	@echo "---"
 	@echo "HTML 报告: go tool cover -html=coverage.out"
+
+## tidy: 整理 Go 模块依赖
+tidy:
+	go mod tidy
 
 ## lint: 静态检查
 lint:
@@ -42,4 +42,4 @@ clean:
 
 ## help: 显示帮助
 help:
-	@grep -E '^## ' Makefile | sed 's/## //' | column -t -s ':'
+	@grep -E '^## ' Makefile | sed 's/^## //' | column -t -s ':'

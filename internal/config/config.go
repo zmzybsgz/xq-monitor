@@ -22,7 +22,7 @@ type Config struct {
 	PushplusToken     string      `json:"pushplus_token"`
 	WeightChangeDelta float64     `json:"weight_change_delta"`
 	TotalAmount       float64     `json:"total_amount"` // 总投资金额（元）
-	Interval          int         `json:"interval"`     // 轮询间隔（秒），0 表示单次运行
+	Interval          int         `json:"interval"`     // 轮询间隔（秒），最小 10
 }
 
 var defaultPortfolios = []Portfolio{
@@ -50,6 +50,9 @@ func Load(path string) Config {
 
 	if cfg.WeightChangeDelta <= 0 {
 		cfg.WeightChangeDelta = 0.5
+	}
+	if cfg.Interval < 10 {
+		cfg.Interval = 30
 	}
 	if len(cfg.Portfolios) == 0 {
 		cfg.Portfolios = defaultPortfolios

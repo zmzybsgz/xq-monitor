@@ -135,22 +135,33 @@ func gzipFile(src string) error {
 	}
 	defer in.Close()
 
-	out, err := os.Create(src + ".gz")
+	// 先写到临时文件，完成后原子 Rename，避免中途崩溃留下损坏的 .gz
+	tmp := src + ".gz.tmp"
+	out, err := os.Create(tmp)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 
 	gz := gzip.NewWriter(out)
 	gz.Name = filepath.Base(src)
 	if _, err := io.Copy(gz, in); err != nil {
-		os.Remove(src + ".gz")
+		out.Close()
+		os.Remove(tmp)
 		return err
 	}
 	if err := gz.Close(); err != nil {
-		os.Remove(src + ".gz")
+		out.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(tmp)
 		return err
 	}
 
+	if err := os.Rename(tmp, src+".gz"); err != nil {
+		os.Remove(tmp)
+		return err
+	}
 	return os.Remove(src)
 }

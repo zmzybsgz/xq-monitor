@@ -105,13 +105,11 @@ func TestTryReload_WithChange(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 	os.WriteFile(path, []byte(`{"total_amount": 100000}`), 0644)
-
-	info, _ := os.Stat(path)
-	lastMod := info.ModTime()
 	old := Load(path)
 
-	// 修改文件（确保时间戳变化）
-	time.Sleep(10 * time.Millisecond)
+	// 将 lastMod 设为过去，确保后续写入的文件时间戳一定 After(lastMod)，
+	// 避免依赖 sleep 和文件系统时间精度
+	lastMod := time.Now().Add(-time.Second)
 	os.WriteFile(path, []byte(`{"total_amount": 200000}`), 0644)
 
 	cfg, reloaded := TryReload(path, &lastMod, old)

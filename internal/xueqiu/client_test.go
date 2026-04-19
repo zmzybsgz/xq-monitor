@@ -39,7 +39,7 @@ func TestParseCurrentResponse_OK(t *testing.T) {
 	}
 }
 
-func TestParseCurrentResponse_Error(t *testing.T) {
+func TestParseCurrentResponse_StringErrorCode(t *testing.T) {
 	body := []byte(`{
 		"error_code": "10026",
 		"error_description": "遇到错误，请刷新页面后重试"
@@ -47,16 +47,31 @@ func TestParseCurrentResponse_Error(t *testing.T) {
 
 	_, err := parseCurrentResponse(body)
 	if err == nil {
-		t.Fatal("expected error for error response")
+		t.Fatal("expected error for string error_code")
+	}
+}
+
+func TestParseCurrentResponse_NumericErrorCode(t *testing.T) {
+	body := []byte(`{
+		"error_code": 401,
+		"error_description": "未登录"
+	}`)
+
+	_, err := parseCurrentResponse(body)
+	if err == nil {
+		t.Fatal("expected error for numeric error_code")
 	}
 }
 
 func TestParseCurrentResponse_EmptyHoldings(t *testing.T) {
 	body := []byte(`{"last_rb": {"cash": 100, "holdings": []}}`)
 
-	_, err := parseCurrentResponse(body)
-	if err == nil {
-		t.Fatal("expected error for empty holdings")
+	holdings, err := parseCurrentResponse(body)
+	if err != nil {
+		t.Fatalf("empty holdings should not return error, got %v", err)
+	}
+	if holdings != nil {
+		t.Fatalf("empty holdings should return nil slice, got %v", holdings)
 	}
 }
 

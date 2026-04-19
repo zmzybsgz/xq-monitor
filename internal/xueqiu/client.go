@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"xueqiu-monitor/internal/model"
@@ -18,6 +19,7 @@ import (
 type Client struct {
 	Cookie     string
 	HTTPClient *http.Client
+	mu         sync.Mutex
 }
 
 // NewClient 创建雪球客户端，cookie 为空时会尝试匿名访问
@@ -82,19 +84,26 @@ func (c *Client) GetHoldings(portfolioID string) ([]model.Holding, error) {
 	return parseCurrentResponse(body)
 }
 
-// parseCurrentResponse 解析持仓响应 JSON
+// parseCurrentResponse 解析持仓响应 JSON，空持仓返回 nil 由调用方判断
 func parseCurrentResponse(body []byte) ([]model.Holding, error) {
 	var result currentResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("解析 JSON 失败: %w", err)
 	}
 
-	if code, ok := result.ErrorCode.(string); ok && code != "" && code != "0" {
-		return nil, fmt.Errorf("雪球返回错误 %s: %s", code, result.ErrorDescription)
+	switch v := result.ErrorCode.(type) {
+	case string:
+		if v != "" && v != "0" {
+			return nil, fmt.Errorf("雪球返回错误 %s: %s", v, result.ErrorDescription)
+		}
+	case float64:
+		if v != 0 {
+			return nil, fmt.Errorf("雪球返回错误 %.0f: %s", v, result.ErrorDescription)
+		}
 	}
 
 	if len(result.LastRb.Holdings) == 0 {
-		return nil, fmt.Errorf("雪球返回持仓为空")
+		return nil, nil
 	}
 
 	holdings := make([]model.Holding, 0, len(result.LastRb.Holdings))
@@ -154,8 +163,11 @@ func parseQuoteResponse(body []byte) (map[string]float64, error) {
 	return prices, nil
 }
 
-// resolveCookie 如果未配置 cookie，尝试访问首页获取匿名 session
+// resolveCookie 如果未配置 cookie，访问首页获取匿名 session 并缓存，加锁保证并发安全
 func (c *Client) resolveCookie() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.Cookie != "" {
 		return c.Cookie
 	}
@@ -173,7 +185,8 @@ func (c *Client) resolveCookie() string {
 		parts = append(parts, ck.Name+"="+ck.Value)
 	}
 	time.Sleep(time.Second)
-	return strings.Join(parts, "; ")
+	c.Cookie = strings.Join(parts, "; ")
+	return c.Cookie
 }
 
 // doWithRetry 对幂等 GET 请求做最多 3 次重试，指数退避
@@ -181,7 +194,9 @@ func (c *Client) doWithRetry(req *http.Request) (*http.Response, error) {
 	const attempts = 3
 	var lastErr error
 	for i := 0; i < attempts; i++ {
-		resp, err := c.HTTPClient.Do(req)
+		// 每次重试克隆请求，避免复用同一 *http.Request 导致连接池异常
+		r := req.Clone(req.Context())
+		resp, err := c.HTTPClient.Do(r)
 		if err == nil && resp.StatusCode < 500 && resp.StatusCode != 429 {
 			return resp, nil
 		}

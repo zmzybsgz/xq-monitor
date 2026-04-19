@@ -19,42 +19,51 @@ const (
 	snapshotDir = "snapshots"
 )
 
-func monitorPortfolio(cfg config.Config, client *xueqiu.Client, p config.Portfolio) {
+// monitorPortfolio 检测单个组合变化。preloaded 非 nil 时跳过 API 抓取，直接使用已有数据。
+// 返回 error 仅当 GetHoldings 失败，供 poll 汇总告警。
+func monitorPortfolio(cfg config.Config, client *xueqiu.Client, p config.Portfolio, preloaded map[string][]model.Holding) error {
 	log.Printf("--- 检测 %s（%s）---", p.Name, p.ID)
 
-	current, err := client.GetHoldings(p.ID)
-	if err != nil {
-		log.Printf("[ERROR] 抓取失败: %v", err)
-		return
+	var current []model.Holding
+	if hs, ok := preloaded[p.ID]; ok {
+		current = hs
+		log.Printf("当前持仓：%d 只（复用启动数据）", len(current))
+	} else {
+		var err error
+		current, err = client.GetHoldings(p.ID)
+		if err != nil {
+			log.Printf("[ERROR] 抓取失败: %v", err)
+			return err
+		}
+		log.Printf("当前持仓：%d 只", len(current))
 	}
-	log.Printf("当前持仓：%d 只", len(current))
 
 	previous, err := snapshot.Load(snapshotDir, p.ID)
 	if err != nil {
 		log.Printf("[ERROR] 读取快照失败: %v", err)
-		return
+		return nil
 	}
 
 	if len(current) == 0 && len(previous) > 0 {
 		log.Printf("[ERROR] 抓到空持仓但历史非空（%d 只），疑似 cookie 失效，本次跳过", len(previous))
-		return
+		return nil
 	}
 
 	if previous == nil {
 		if len(current) == 0 {
 			log.Println("首次运行但抓到空持仓，跳过")
-			return
+			return nil
 		}
 		log.Println("首次运行，保存快照，无需通知")
 		if err := snapshot.Save(snapshotDir, p.ID, current); err != nil {
 			log.Printf("[ERROR] 保存快照失败: %v", err)
 		}
-		return
+		return nil
 	}
 
 	if snapshot.Fingerprint(previous) == snapshot.Fingerprint(current) {
 		log.Println("持仓无变化")
-		return
+		return nil
 	}
 
 	diff := snapshot.Diff(previous, current, cfg.WeightChangeDelta)
@@ -63,13 +72,12 @@ func monitorPortfolio(cfg config.Config, client *xueqiu.Client, p config.Portfol
 		if err := snapshot.Save(snapshotDir, p.ID, current); err != nil {
 			log.Printf("[ERROR] 保存快照失败: %v", err)
 		}
-		return
+		return nil
 	}
 
 	log.Printf("发现调仓！新增=%d 移除=%d 调仓=%d",
 		len(diff.Added), len(diff.Removed), len(diff.Changed))
 
-	// 获取股价并计算买卖建议
 	var advices []model.TradeAdvice
 	if cfg.TotalAmount > 0 {
 		var symbols []string
@@ -100,20 +108,52 @@ func monitorPortfolio(cfg config.Config, client *xueqiu.Client, p config.Portfol
 	}
 
 	if err := notify.SendWechat(cfg.PushplusToken, p.ID, p.Name, diff, advices, cfg.TotalAmount); err != nil {
-		log.Printf("[ERROR] 发送通知失败: %v", err)
+		log.Printf("[ERROR] 发送通知失败，跳过快照更新以确保下次重试: %v", err)
+		return nil
 	}
 
 	if err := snapshot.Save(snapshotDir, p.ID, current); err != nil {
 		log.Printf("[ERROR] 保存快照失败: %v", err)
 	}
+	return nil
 }
 
-func runOnce(cfg config.Config, client *xueqiu.Client) {
+// poll 执行一轮检测。preloaded 非 nil 时对应组合跳过 API 抓取（仅首轮复用启动数据）。
+// 收集所有抓取失败的组合，全局限速后统一发一条汇总告警。
+func poll(cfg config.Config, client *xueqiu.Client, lastErrNotify *time.Time, preloaded map[string][]model.Holding) {
+	fetchErrors := make(map[string]string)
 	for i, p := range cfg.Portfolios {
-		monitorPortfolio(cfg, client, p)
+		if err := monitorPortfolio(cfg, client, p, preloaded); err != nil {
+			fetchErrors[p.Name+"（"+p.ID+"）"] = err.Error()
+		}
 		if i < len(cfg.Portfolios)-1 {
 			time.Sleep(2 * time.Second)
 		}
+	}
+
+	if len(fetchErrors) > 0 && time.Since(*lastErrNotify) >= time.Hour {
+		if err := notify.SendFetchErrors(cfg.PushplusToken, fetchErrors); err != nil {
+			log.Printf("[ERROR] 发送抓取失败汇总警报失败: %v", err)
+		} else {
+			*lastErrNotify = time.Now()
+		}
+	}
+}
+
+func sendDailyHeartbeat(cfg config.Config, client *xueqiu.Client) {
+	log.Println("--- 每日持仓播报 ---")
+	holdings := make(map[string][]model.Holding)
+	fetchErrors := make(map[string]string)
+	for _, p := range cfg.Portfolios {
+		if hs, err := client.GetHoldings(p.ID); err == nil {
+			holdings[p.Name+"（"+p.ID+"）"] = hs
+		} else {
+			fetchErrors[p.Name+"（"+p.ID+"）"] = err.Error()
+			log.Printf("[WARN] 每日播报获取 %s 持仓失败: %v", p.Name, err)
+		}
+	}
+	if err := notify.SendDailySummary(cfg.PushplusToken, holdings, fetchErrors); err != nil {
+		log.Printf("[ERROR] 每日持仓播报推送失败: %v", err)
 	}
 }
 
@@ -123,8 +163,6 @@ func main() {
 		log.Fatalf("日志初始化失败: %v", err)
 	}
 	defer l.Close()
-
-	once := len(os.Args) > 1 && os.Args[1] == "--once"
 
 	cfg := config.Load(configFile)
 	var configLastMod time.Time
@@ -144,36 +182,52 @@ func main() {
 
 	client := xueqiu.NewClient(cfg.XueqiuCookie)
 
-	// 启动时推送当前持仓概览
-	if cfg.PushplusToken != "" {
-		summaryHoldings := make(map[string][]model.Holding)
-		for _, p := range cfg.Portfolios {
-			if hs, err := client.GetHoldings(p.ID); err == nil {
-				summaryHoldings[p.Name+"（"+p.ID+"）"] = hs
-				log.Printf("获取 %s 持仓 %d 只", p.Name, len(hs))
-			} else {
-				log.Printf("[WARN] 获取 %s 持仓失败: %v", p.Name, err)
-			}
+	// 启动时抓取持仓：一方面推送概览通知，另一方面缓存数据供第一次 poll 复用，避免重复请求
+	startupHoldings := make(map[string][]model.Holding) // keyed by portfolio ID，供 poll 复用
+	summaryHoldings := make(map[string][]model.Holding) // keyed by display name，供通知展示
+	for _, p := range cfg.Portfolios {
+		if hs, err := client.GetHoldings(p.ID); err == nil {
+			startupHoldings[p.ID] = hs
+			summaryHoldings[p.Name+"（"+p.ID+"）"] = hs
+			log.Printf("获取 %s 持仓 %d 只", p.Name, len(hs))
+		} else {
+			log.Printf("[WARN] 获取 %s 持仓失败: %v", p.Name, err)
 		}
+	}
+	if cfg.PushplusToken != "" {
 		if err := notify.SendStartupSummary(cfg.PushplusToken, summaryHoldings); err != nil {
 			log.Printf("[ERROR] 启动概览推送失败: %v", err)
 		}
 	}
 
-	if once || cfg.Interval <= 0 {
-		runOnce(cfg, client)
-		log.Println("=== 监控完成 ===")
-		return
+	var lastErrNotify time.Time
+
+	// 程序启动时已在 8 点后，跳过当天心跳（启动通知已覆盖）；启动时在 8 点前，当天 8 点正常触发
+	lastHeartbeatDate := ""
+	if time.Now().Hour() >= 8 {
+		lastHeartbeatDate = time.Now().Format("2006-01-02")
 	}
 
 	log.Printf("进入常驻模式，每 %d 秒检测一次（修改 config.json 自动热加载）", cfg.Interval)
+
+	// 第一次 poll 复用启动数据，后续正常抓取
+	poll(cfg, client, &lastErrNotify, startupHoldings)
+
 	for {
-		runOnce(cfg, client)
 		log.Printf("--- 下次检测：%s ---", time.Now().Add(time.Duration(cfg.Interval)*time.Second).Format("15:04:05"))
 		time.Sleep(time.Duration(cfg.Interval) * time.Second)
+
 		if newCfg, reloaded := config.TryReload(configFile, &configLastMod, cfg); reloaded {
 			cfg = newCfg
 			client = xueqiu.NewClient(cfg.XueqiuCookie)
 		}
+
+		// 每日早 8 点推送持仓播报
+		if now := time.Now(); now.Hour() >= 8 && now.Format("2006-01-02") != lastHeartbeatDate {
+			lastHeartbeatDate = now.Format("2006-01-02")
+			sendDailyHeartbeat(cfg, client)
+		}
+
+		poll(cfg, client, &lastErrNotify, nil)
 	}
 }

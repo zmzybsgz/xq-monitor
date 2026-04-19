@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"xueqiu-monitor/internal/model"
 )
@@ -76,6 +77,10 @@ func Diff(old, new []model.Holding, threshold float64) model.Diff {
 			diff.Removed = append(diff.Removed, h)
 		}
 	}
+
+	sort.Slice(diff.Added, func(i, j int) bool { return diff.Added[i].Symbol < diff.Added[j].Symbol })
+	sort.Slice(diff.Removed, func(i, j int) bool { return diff.Removed[i].Symbol < diff.Removed[j].Symbol })
+	sort.Slice(diff.Changed, func(i, j int) bool { return diff.Changed[i].Symbol < diff.Changed[j].Symbol })
 
 	return diff
 }

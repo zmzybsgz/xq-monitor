@@ -12,5 +12,5 @@ ENV TZ=Asia/Shanghai
 WORKDIR /app
 COPY --from=builder /xq-monitor .
 
-VOLUME ["/app/snapshots"]
+VOLUME ["/app/snapshots", "/app/logs"]
 ENTRYPOINT ["./xq-monitor"]
