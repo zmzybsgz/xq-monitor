@@ -90,42 +90,69 @@ func (l *Logger) backgroundRotate() {
 // compressOld 压缩非今天的 .log 文件为 .log.gz
 func (l *Logger) compressOld() {
 	today := time.Now().Format("2006-01-02")
-	entries, _ := os.ReadDir(logDir)
-	for _, e := range entries {
-		name := e.Name()
-		if !strings.HasPrefix(name, filePrefix) || !strings.HasSuffix(name, ".log") {
-			continue
-		}
-		if strings.Contains(name, today) {
-			continue
-		}
-		src := filepath.Join(logDir, name)
-		if err := gzipFile(src); err != nil {
-			log.Printf("[WARN] 压缩日志失败 %s: %v", name, err)
-		}
+	if err := compressOldFiles(logDir, filePrefix, today); err != nil {
+		log.Printf("[WARN] 读取日志目录失败: %v", err)
 	}
 }
 
 // cleanOld 删除超过 maxKeepDay 天的日志
 func (l *Logger) cleanOld() {
 	cutoff := time.Now().AddDate(0, 0, -maxKeepDay)
-	entries, _ := os.ReadDir(logDir)
+	if err := cleanOldFiles(logDir, filePrefix, cutoff); err != nil {
+		log.Printf("[WARN] 读取日志目录失败: %v", err)
+	}
+}
+
+// compressOldFiles 压缩 dir 下所有匹配 prefix 且非 today 日期的 .log 文件为 .log.gz。
+// 单个文件压缩失败仅打印 WARN，不中断后续文件，但读取目录失败会返回错误。
+func compressOldFiles(dir, prefix, today string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
 	for _, e := range entries {
 		name := e.Name()
-		if !strings.HasPrefix(name, filePrefix) {
+		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".log") {
 			continue
 		}
-		dateStr := strings.TrimPrefix(name, filePrefix)
+		if strings.Contains(name, today) {
+			continue
+		}
+		src := filepath.Join(dir, name)
+		if err := gzipFile(src); err != nil {
+			log.Printf("[WARN] 压缩日志失败 %s: %v", name, err)
+		}
+	}
+	return nil
+}
+
+// cleanOldFiles 删除 dir 下匹配 prefix、文件名日期早于 cutoff 的日志文件。
+// 单个文件删除失败仅打印 WARN，不中断后续文件，但读取目录失败会返回错误。
+func cleanOldFiles(dir, prefix string, cutoff time.Time) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		dateStr := strings.TrimPrefix(name, prefix)
 		dateStr = strings.TrimSuffix(dateStr, ".gz")
 		dateStr = strings.TrimSuffix(dateStr, ".log")
 		t, err := time.Parse("2006-01-02", dateStr)
 		if err != nil {
 			continue
 		}
-		if t.Before(cutoff) {
-			os.Remove(filepath.Join(logDir, name))
+		if !t.Before(cutoff) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			log.Printf("[WARN] 删除过期日志失败 %s: %v", name, err)
 		}
 	}
+	return nil
 }
 
 func gzipFile(src string) error {
